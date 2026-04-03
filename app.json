@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "RemoPhone",
+    "slug": "remophone",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#f4ebdd"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "android": {
+      "package": "com.remophone.app"
+    }
+  }
+}
