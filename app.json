@@ -14,6 +14,11 @@
     ],
     "android": {
       "package": "com.remophone.app"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "53f8a8c6-95f7-4c4c-bb74-2eb63bab55ae"
+      }
     }
   }
 }

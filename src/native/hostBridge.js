@@ -43,7 +43,7 @@ export function getMonitorState() {
 
 export function getNativeHostModulesPlan() {
   return {
-    notificationListener: "Needed for mirroring notifications from other apps.",
+    notificationListener: "Needed for mirroring notifications from other apps. See native/android-host/.",
     telecomWatcher: "Needed for call state and limited call actions.",
     smsSync: "Needed for message thread sync and sending SMS from the remote phone.",
     mediaIndexer: "Needed for photo library summaries and later media previews.",
