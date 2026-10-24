@@ -1,5 +1,49 @@
 # RemoPhone
 
+## Claude Duet clone (default screen)
+
+`App.js` now opens a Claude Duet-style app built from reference screenshots: Chat with channels
+and a drawer, Tasks with approvals, Make (documents, designs, presentations) and a slide/file
+viewer with "Ask Claude for a change". The original RemoPhone prototype is still here; run it with
+`EXPO_PUBLIC_APP=remophone npm start`.
+
+Backend is Gemini, called straight from the app:
+
+- Chat, files and dictation: `generateContent` with function calling (`gemini-3.8-flash`).
+- Voice: Gemini Live API over WebSocket (`gemini-3.8-live`), with transcripts and tool calls.
+- Both model IDs and the voice are editable in Settings, because Google renames them often.
+
+Setup: open Settings (avatar or drawer), paste a Gemini API key. The key lives in the device
+keystore. It is still extractable from an app, so use a restricted, low-quota key.
+
+```
+npm install
+npm start            # Expo Go (QR) or press w for the web version
+npm run test:duet    # offline tests: PCM helpers, Live client vs a mock server, REST tool loop
+```
+
+### Build an APK
+
+`eas.json` already has an APK profile. From a machine with internet:
+
+```
+npm i -g eas-cli
+eas login
+npm run apk          # = eas build -p android --profile preview
+```
+
+### What works where
+
+| Feature | Expo Go / APK | Web |
+| --- | --- | --- |
+| Chat, tasks, files, editing with Gemini | yes | yes |
+| Dictation (mic button, Gemini transcribes) | yes, untested on device | yes |
+| Live voice (waveform button) | no, needs a dev build on Expo SDK 54+ | yes |
+
+Native live voice needs raw PCM streaming, which Expo Go and SDK 51 cannot do. The adapter in
+`src/duet/audio/liveAudio.native.js` targets `react-native-audio-api` and has not been run on a
+device. Tasks and approvals only record state; there are no real connectors behind them.
+
 RemoPhone is now an Expo React Native starter with a WebSocket relay flow, mirrored-notification and call-event support, and a native-host plan for the phone you leave at home.
 
 ## What is included

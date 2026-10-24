@@ -4,10 +4,10 @@
     "slug": "remophone",
     "version": "1.0.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "splash": {
       "resizeMode": "contain",
-      "backgroundColor": "#f4ebdd"
+      "backgroundColor": "#000000"
     },
     "assetBundlePatterns": [
       "**/*"
@@ -19,6 +19,19 @@
       "eas": {
         "projectId": "53f8a8c6-95f7-4c4c-bb74-2eb63bab55ae"
       }
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-font",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Allow RemoPhone to use the microphone for voice and dictation."
+        }
+      ]
+    ],
+    "web": {
+      "bundler": "metro"
     }
   }
 }
