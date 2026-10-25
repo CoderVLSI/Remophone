@@ -5,7 +5,7 @@ import Icon, { CHANNEL_ICONS } from "../components/Icon";
 import { KIND_META } from "../components/ArtifactCard";
 import { colors } from "../theme";
 import { VOICES } from "../gemini/config";
-import { checkApiKey, listModels, pickFallbacks } from "../gemini/rest";
+import { checkApiKey, listModels, pickFallbacks, sanitizeApiKey } from "../gemini/rest";
 import { CONNECTORS, GEMINI_KEY_URL } from "../connectors";
 import ConnectorLogo from "../components/ConnectorLogo";
 import { useDuet } from "../store";
@@ -75,7 +75,7 @@ export function SettingsSheet({ visible, onClose }) {
   const set = (key) => (value) => setForm((f) => ({ ...f, [key]: value }));
   const save = async () => {
     await updateSettings({
-      apiKey: form.apiKey.trim(),
+      apiKey: sanitizeApiKey(form.apiKey),
       chatModel: form.chatModel.trim() || settings.chatModel,
       liveModel: form.liveModel.trim() || settings.liveModel,
       chatFallbacks: splitModels(form.chatFallbacksText),

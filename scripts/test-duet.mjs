@@ -4,7 +4,8 @@
 import assert from "node:assert/strict";
 import { WebSocketServer, WebSocket } from "ws";
 import { LiveSession, connectWithFallback, liveFallbackAllowed } from "../src/duet/gemini/live.js";
-import { runAgent, generateArtifact, checkApiKey, generateWithFallback, listModels, pickFallbacks, modelChain, fallbackKind, resetModelCooldowns, stripThoughtSignatures, GeminiError } from "../src/duet/gemini/rest.js";
+import { buildWav, createPcmPlayer } from "../src/duet/audio/pcmPlayer.js";
+import { runAgent, generateArtifact, checkApiKey, generateWithFallback, sanitizeApiKey, NETWORK_HELP, listModels, pickFallbacks, modelChain, fallbackKind, resetModelCooldowns, stripThoughtSignatures, GeminiError } from "../src/duet/gemini/rest.js";
 import { LOGOS } from "../src/duet/logos.js";
 import { CONNECTORS } from "../src/duet/connectors.js";
 import { executeTool, functionDeclarations } from "../src/duet/gemini/tools.js";
@@ -133,7 +134,7 @@ await test("LiveSession handshake, audio, transcripts and tool calls against a m
   session.close();
   wss.close();
 
-  assert.match(received[0].url, /\?key=test%20key$/);
+  assert.match(received[0].url, /\?key=testkey$/, "spaces in a pasted key are removed");
   const setup = received[1].setup;
   assert.equal(setup.model, "models/gemini-3.8-live");
   assert.deepEqual(setup.generationConfig.responseModalities, ["AUDIO"]);
@@ -490,6 +491,104 @@ await test("Live: when configured models are refused, newest discovered voice mo
   assert.deepEqual(setups, ["models/gone-1", "models/gone-2", "models/found-live"]);
   ok.session.close();
   wss.close();
+});
+
+await test("sanitizeApiKey removes whitespace, invisible characters and quotes", () => {
+  assert.equal(sanitizeApiKey("  AIzaSy-abc_123\n"), "AIzaSy-abc_123");
+  assert.equal(sanitizeApiKey("AIza\u200BSy\u00A0abc"), "AIzaSyabc");
+  assert.equal(sanitizeApiKey('"AIzaSyabc"'), "AIzaSyabc");
+  assert.equal(sanitizeApiKey(undefined), "");
+});
+
+await test("a request that never gets an answer reports the network problem, not a raw fetch error, and does not trigger fallbacks", async () => {
+  resetModelCooldowns();
+  let calls = 0;
+  const offline = async () => {
+    calls += 1;
+    throw new TypeError("Network request failed");
+  };
+  await assert.rejects(
+    generateWithFallback({ settings: { apiKey: "k", chatModel: "a", chatFallbacks: ["b"] }, body: {}, fetchImpl: offline }),
+    (error) => error.message === NETWORK_HELP && error.status === 0,
+  );
+  assert.equal(calls, 1, "no point trying other models when nothing is reachable");
+  await assert.rejects(checkApiKey({ apiKey: "k", fetchImpl: offline }), /Couldn't reach Google/);
+  resetModelCooldowns();
+});
+
+await test("a key with an invisible character is sent cleaned up", async () => {
+  let sent;
+  const fetchImpl = async (_url, init) => ((sent = init.headers["x-goog-api-key"]), jsonRes(200, okBody("x")));
+  await generateWithFallback({ settings: { apiKey: "AIza\u200Bkey\n", chatModel: "m", chatFallbacks: [] }, body: {}, fetchImpl });
+  assert.equal(sent, "AIzakey");
+});
+
+await test("buildWav writes a valid 16-bit mono header", () => {
+  const pcm = new Uint8Array([1, 0, 2, 0, 3, 0]);
+  const wav = buildWav(pcm, 24000);
+  const view = new DataView(wav.buffer);
+  const tag = (o) => String.fromCharCode(...wav.slice(o, o + 4));
+  assert.deepEqual([tag(0), tag(8), tag(12), tag(36)], ["RIFF", "WAVE", "fmt ", "data"]);
+  assert.equal(view.getUint32(4, true), 36 + 6);
+  assert.equal(view.getUint32(24, true), 24000);
+  assert.equal(view.getUint32(28, true), 48000);
+  assert.equal(view.getUint16(22, true), 1);
+  assert.equal(view.getUint16(34, true), 16);
+  assert.equal(view.getUint32(40, true), 6);
+  assert.deepEqual(Array.from(wav.slice(44)), [1, 0, 2, 0, 3, 0]);
+});
+
+await test("pcmPlayer batches chunks, plays clips in order, flushes the tail and drops audio on interrupt", async () => {
+  const timers = [];
+  const setTimer = (fn) => (timers.push(fn), timers.length);
+  const clearTimer = (id) => (timers[id - 1] = null);
+  const runTimers = () => timers.splice(0).forEach((fn) => fn && fn());
+  const played = [];
+  const stopped = [];
+  const finish = [];
+  const createClip = async (wavBase64) => {
+    const id = played.length + stopped.length + finish.length;
+    const bytes = Buffer.from(wavBase64, "base64");
+    return {
+      play: () => new Promise((resolve) => { played.push(bytes.length - 44); finish.push(resolve); }),
+      stop: async () => stopped.push(id),
+      unload: async () => {},
+    };
+  };
+  const player = createPcmPlayer({ createClip, sampleRate: 24000, minBufferMs: 100, tailMs: 50, setTimer, clearTimer });
+  const chunk = (ms) => Buffer.alloc(Math.round((ms * 24000 * 2) / 1000)).toString("base64"); // ms of silence
+  const settle = () => new Promise((r) => setImmediate(r));
+
+  player.push(chunk(40));
+  player.push(chunk(40));
+  await settle();
+  assert.equal(played.length, 0, "under the minimum buffer nothing plays yet");
+  player.push(chunk(40));
+  await settle();
+  assert.equal(played.length, 1, "120 ms reached the threshold, one clip starts");
+  assert.equal(played[0], Math.round((120 * 24000 * 2) / 1000));
+  assert.ok(player.isPlaying());
+
+  player.push(chunk(30));
+  runTimers(); // the tail timer fires for a short last piece
+  await settle();
+  assert.equal(played.length, 1, "second clip waits for the first to finish (ordered)");
+  finish[0]();
+  await settle();
+  assert.equal(played.length, 2);
+
+  player.push(chunk(200));
+  player.flush(); // user interrupted
+  await settle();
+  assert.equal(stopped.length, 1, "the clip that was playing is stopped");
+  finish[1]();
+  await settle();
+  assert.equal(played.length, 2, "audio queued before the interrupt never plays");
+  player.push(chunk(150));
+  await settle();
+  assert.equal(played.length, 3, "playback resumes with new audio");
+  finish[2]();
+  await settle();
 });
 
 console.log(`\n${passed} passed`);

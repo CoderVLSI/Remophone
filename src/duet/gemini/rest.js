@@ -12,9 +12,29 @@ export class GeminiError extends Error {
   }
 }
 
-export async function generateContent({ apiKey, model, body, signal, fetchImpl = fetch }) {
+// Keys are plain printable ASCII. A pasted key can carry a newline, a space or an invisible
+// character, and Android's HTTP client rejects such a header with a bare "Network request failed".
+export function sanitizeApiKey(raw) {
+  return String(raw || "").replace(/[^\x21-\x7E]/g, "").replace(/^["'`]+|["'`]+$/g, "");
+}
+
+export const NETWORK_HELP =
+  "Couldn't reach Google (generativelanguage.googleapis.com). Check the phone's internet connection, any VPN or Private DNS setting, and that its date and time are correct.";
+
+// fetch itself rejecting (as opposed to Google answering with an error) means no response at all.
+async function request(fetchImpl, url, init) {
+  try {
+    return await fetchImpl(url, init);
+  } catch (error) {
+    if (error?.name === "AbortError") throw error;
+    throw new GeminiError(NETWORK_HELP, 0);
+  }
+}
+
+export async function generateContent({ apiKey: rawKey, model, body, signal, fetchImpl = fetch }) {
+  const apiKey = sanitizeApiKey(rawKey);
   if (!apiKey) throw new GeminiError("Add your Gemini API key in Settings to talk to Claude Duet.", 401);
-  const response = await fetchImpl(`${REST_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
+  const response = await request(fetchImpl, `${REST_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify(body),
@@ -38,14 +58,15 @@ export async function generateContent({ apiKey, model, body, signal, fetchImpl =
 // Asks Google which models this key can use. Cached for an hour per key.
 let modelCache = null;
 
-export async function listModels({ apiKey, fetchImpl = fetch, now = Date.now, force = false }) {
+export async function listModels({ apiKey: rawKey, fetchImpl = fetch, now = Date.now, force = false }) {
+  const apiKey = sanitizeApiKey(rawKey);
   if (!apiKey) throw new GeminiError("Paste a key first.", 401);
   if (!force && modelCache && modelCache.key === apiKey && now() - modelCache.at < 60 * 60 * 1000) return modelCache.models;
   const models = [];
   let pageToken = "";
   for (let page = 0; page < 10; page += 1) {
     const url = `${REST_BASE}/models?pageSize=100${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`;
-    const response = await fetchImpl(url, { headers: { "x-goog-api-key": apiKey } });
+    const response = await request(fetchImpl, url, { headers: { "x-goog-api-key": apiKey } });
     const text = await response.text();
     let json = null;
     try {
@@ -298,9 +319,10 @@ export async function transcribeAudio({ settings, base64, mimeType, signal, fetc
 }
 
 // Cheap authenticated call used by Settings -> "Test key". Lists one model.
-export async function checkApiKey({ apiKey, fetchImpl = fetch }) {
+export async function checkApiKey({ apiKey: rawKey, fetchImpl = fetch }) {
+  const apiKey = sanitizeApiKey(rawKey);
   if (!apiKey) throw new GeminiError("Paste a key first.", 401);
-  const response = await fetchImpl(`${REST_BASE}/models?pageSize=1`, { headers: { "x-goog-api-key": apiKey } });
+  const response = await request(fetchImpl, `${REST_BASE}/models?pageSize=1`, { headers: { "x-goog-api-key": apiKey } });
   if (response.ok) return true;
   let message = `HTTP ${response.status}`;
   try {

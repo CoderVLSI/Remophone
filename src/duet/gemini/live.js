@@ -17,7 +17,7 @@ export class LiveSession {
     endpoint = LIVE_ENDPOINT,
     tools = toolsConfig,
   }) {
-    this.apiKey = apiKey;
+    this.apiKey = String(apiKey || "").replace(/[^\x21-\x7E]/g, "");
     this.model = model.startsWith("models/") ? model : `models/${model}`;
     this.voice = voice;
     this.systemInstruction = systemInstruction;

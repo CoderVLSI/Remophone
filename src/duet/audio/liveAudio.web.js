@@ -101,6 +101,8 @@ export function createLiveAudio({ onChunk, onLevel }) {
       node.onended = () => playing.delete(node);
     },
 
+    endTurn() {},
+
     flush() {
       for (const node of playing) {
         try {

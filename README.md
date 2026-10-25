@@ -38,11 +38,14 @@ npm run apk          # = eas build -p android --profile preview
 | --- | --- | --- |
 | Chat, tasks, files, editing with Gemini | yes | yes |
 | Dictation (mic button, Gemini transcribes) | yes, untested on device | yes |
-| Live voice (waveform button) | no, needs a dev build on Expo SDK 54+ | yes |
+| Live voice (waveform button) | Android APK: built, not yet tried on a phone. Expo Go and iOS: no | yes |
 
-Native live voice needs raw PCM streaming, which Expo Go and SDK 51 cannot do. The adapter in
-`src/duet/audio/liveAudio.native.js` targets `react-native-audio-api` and has not been run on a
-device. Tasks and approvals only record state; there are no real connectors behind them.
+Native live voice uses `native-modules/live-audio-stream` (a fixed, Android-only fork of
+react-native-live-audio-stream, MIT) to capture the microphone as PCM, and expo-av to play the
+model's audio as short WAV clips (`src/duet/audio/liveAudio.native.js`). It is half duplex: the mic
+is paused while the model speaks. It compiles in CI but has not been run on a device. Expo Go has no
+native module, so voice only works in an APK build. iOS isn't covered yet.
+Tasks and approvals only record state; there are no real connectors behind them.
 
 RemoPhone is now an Expo React Native starter with a WebSocket relay flow, mirrored-notification and call-event support, and a native-host plan for the phone you leave at home.
 

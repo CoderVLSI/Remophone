@@ -51,6 +51,7 @@ export function createVoiceController(deps) {
         set({ status: "listening" });
         break;
       case "turnComplete":
+        audio?.endTurn?.();
         commitUser();
         commitAssistant();
         set({ status: "listening", userText: "", assistantText: "" });
