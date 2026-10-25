@@ -6,6 +6,9 @@ import { WebSocketServer, WebSocket } from "ws";
 import { LiveSession } from "../src/duet/gemini/live.js";
 import { runAgent, generateArtifact } from "../src/duet/gemini/rest.js";
 import { executeTool, functionDeclarations } from "../src/duet/gemini/tools.js";
+import JSZip from "jszip";
+import { buildDeckPptx } from "../src/duet/pptx.js";
+import { makeSeed } from "../src/duet/seed.js";
 import {
   base64ToBytes,
   bytesToBase64,
@@ -242,6 +245,19 @@ await test("generateArtifact requests structured JSON and parses it", async () =
   assert.equal(out.slides[0].title, "Hi");
   assert.equal(body.generationConfig.responseMimeType, "application/json");
   assert.equal(body.generationConfig.responseSchema.type, "OBJECT");
+});
+
+await test("buildDeckPptx writes a valid .pptx with every slide and the speaker notes", async () => {
+  const deck = makeSeed().artifacts.find((a) => a.id === "a_deck9");
+  const b64 = await buildDeckPptx(deck);
+  const zip = await JSZip.loadAsync(b64, { base64: true });
+  const slideFiles = Object.keys(zip.files).filter((f) => /^ppt\/slides\/slide\d+\.xml$/.test(f));
+  assert.equal(slideFiles.length, deck.content.slides.length);
+  const first = await zip.file("ppt/slides/slide1.xml").async("string");
+  assert.match(first, /Anthropic just released Duet\./);
+  const notes1 = await zip.file("ppt/notesSlides/notesSlide1.xml").async("string");
+  assert.match(notes1, /Open with the one-line summary/);
+  await assert.rejects(buildDeckPptx({ kind: "document", title: "x", content: {} }), /Only presentations/);
 });
 
 console.log(`\n${passed} passed`);

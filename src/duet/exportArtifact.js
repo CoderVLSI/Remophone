@@ -1,4 +1,8 @@
 import { Platform, Share } from "react-native";
+import * as FileSystem from "expo-file-system";
+import * as Sharing from "expo-sharing";
+import { base64ToBytes } from "./audio/pcm";
+import { PPTX_MIME, buildDeckPptx, deckFileName } from "./pptx";
 
 export function toMarkdown(artifact) {
   const content = artifact.content || {};
@@ -40,4 +44,29 @@ export async function exportArtifact(artifact) {
     return;
   }
   await Share.share({ title: artifact.title, message: text });
+}
+
+// Builds a real .pptx and hands it to the user: a download on web, the share sheet on phones.
+export async function exportPptx(artifact) {
+  const base64 = await buildDeckPptx(artifact);
+  const name = deckFileName(artifact);
+  if (Platform.OS === "web") {
+    const url = URL.createObjectURL(new Blob([base64ToBytes(base64)], { type: PPTX_MIME }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    return;
+  }
+  const uri = `${FileSystem.cacheDirectory}${name}`;
+  await FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 });
+  if (!(await Sharing.isAvailableAsync())) throw new Error("Sharing isn't available on this device.");
+  await Sharing.shareAsync(uri, {
+    mimeType: PPTX_MIME,
+    dialogTitle: artifact.title,
+    UTI: "org.openxmlformats.presentationml.presentation",
+  });
 }

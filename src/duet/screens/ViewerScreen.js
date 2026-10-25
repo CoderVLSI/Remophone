@@ -7,7 +7,7 @@ import { RoundButton, TOP_INSET } from "../components/Chrome";
 import { DocView, FRAME_H, FRAME_W, FrameView, SLIDE_H, SLIDE_W, SlideView } from "../components/ArtifactViews";
 import { colors, truncate } from "../theme";
 import { useDuet } from "../store";
-import { exportArtifact } from "../exportArtifact";
+import { exportArtifact, exportPptx } from "../exportArtifact";
 
 const BLANK_FRAME = {
   name: "New frame",
@@ -42,6 +42,7 @@ export default function ViewerScreen({ artifactId, onClose }) {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const kind = artifact?.kind;
   const paged = kind === "deck" || kind === "design";
@@ -94,6 +95,20 @@ export default function ViewerScreen({ artifactId, onClose }) {
     if (result?.error) setError(result.error);
   };
 
+  const runExport = async (format) => {
+    setMenu(null);
+    setError(null);
+    setExporting(true);
+    try {
+      if (format === "pptx") await exportPptx(artifact);
+      else await exportArtifact(artifact);
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const renderItem = (item, widthPx) =>
     kind === "deck" ? <SlideView slide={item} width={widthPx} /> : <FrameView frame={item} width={widthPx} />;
 
@@ -117,7 +132,7 @@ export default function ViewerScreen({ artifactId, onClose }) {
           <View />
         )}
         <Pill>
-          <PillButton label="Export" onPress={() => exportArtifact(artifact)}>
+          <PillButton label="Export" onPress={() => (kind === "deck" ? setMenu("export") : runExport("md"))}>
             <Icon name="download" size={17} color={colors.textDim} />
           </PillButton>
           {paged ? (
@@ -153,10 +168,10 @@ export default function ViewerScreen({ artifactId, onClose }) {
             <DocView content={artifact.content} />
           </ScrollView>
         ) : null}
-        {working ? (
+        {working || exporting ? (
           <View style={styles.working}>
             <ActivityIndicator color={colors.accent} />
-            <Text style={styles.workingText}>{artifact.editing ? "Claude Duet is editing…" : "Creating…"}</Text>
+            <Text style={styles.workingText}>{exporting ? "Preparing your file…" : artifact.editing ? "Claude Duet is editing…" : "Creating…"}</Text>
           </View>
         ) : null}
         {artifact.status === "error" ? (
@@ -214,7 +229,8 @@ export default function ViewerScreen({ artifactId, onClose }) {
 
       <Sheet visible={menu === "more"} onClose={() => { setMenu(null); setConfirmDelete(false); }} title={truncate(artifact.title, 34)}>
         <SheetRow icon="bookmark" label={artifact.pinned ? "Unpin" : "Pin to Make"} onPress={() => { togglePin(artifact.id); setMenu(null); }} />
-        <SheetRow icon="download" label="Export as Markdown" onPress={() => { exportArtifact(artifact); setMenu(null); }} />
+        {kind === "deck" ? <SheetRow icon="monitor" label="Export as PowerPoint (.pptx)" onPress={() => runExport("pptx")} /> : null}
+        <SheetRow icon="download" label="Export as Markdown" onPress={() => runExport("md")} />
         <SheetRow
           icon="trash-2"
           danger
@@ -234,6 +250,11 @@ export default function ViewerScreen({ artifactId, onClose }) {
         <SheetRow icon="plus-square" label={kind === "deck" ? "Blank slide after this one" : "Blank frame after this one"} onPress={addBlank} />
         <SheetRow icon="copy" label="Duplicate" onPress={duplicate} />
         <SheetRow icon="trash" danger label={kind === "deck" ? "Delete this slide" : "Delete this frame"} onPress={removeCurrent} />
+      </Sheet>
+
+      <Sheet visible={menu === "export"} onClose={() => setMenu(null)} title="Export">
+        <SheetRow icon="monitor" label="PowerPoint (.pptx)" detail="Opens in PowerPoint, Keynote, Slides" onPress={() => runExport("pptx")} />
+        <SheetRow icon="file-text" label="Markdown outline (.md)" onPress={() => runExport("md")} />
       </Sheet>
 
       <Sheet visible={menu === "zoom"} onClose={() => setMenu(null)} title="Zoom">
