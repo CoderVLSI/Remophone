@@ -32,6 +32,8 @@
   "devDependencies": {
     "babel-preset-expo": "~11.0.10",
     "esbuild": "^0.28.2",
+    "simple-icons": "^16.35.0",
+    "simple-icons-legacy": "npm:simple-icons@^11.14.0",
     "ws": "^8.18.0"
   }
 }

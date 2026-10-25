@@ -160,3 +160,17 @@ export async function transcribeAudio({ settings, base64, mimeType, signal, fetc
   });
   return partsText(json?.candidates?.[0]?.content).trim();
 }
+
+// Cheap authenticated call used by Settings -> "Test key". Lists one model.
+export async function checkApiKey({ apiKey, fetchImpl = fetch }) {
+  if (!apiKey) throw new GeminiError("Paste a key first.", 401);
+  const response = await fetchImpl(`${REST_BASE}/models?pageSize=1`, { headers: { "x-goog-api-key": apiKey } });
+  if (response.ok) return true;
+  let message = `HTTP ${response.status}`;
+  try {
+    message = JSON.parse(await response.text())?.error?.message || message;
+  } catch {
+    // keep the status line
+  }
+  throw new GeminiError(message, response.status);
+}

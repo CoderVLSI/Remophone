@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import Sheet, { SheetButton } from "../components/Sheet";
 import Icon, { CHANNEL_ICONS } from "../components/Icon";
 import { KIND_META } from "../components/ArtifactCard";
 import { colors } from "../theme";
 import { VOICES } from "../gemini/config";
+import { checkApiKey } from "../gemini/rest";
+import { CONNECTORS, GEMINI_KEY_URL } from "../connectors";
+import ConnectorLogo from "../components/ConnectorLogo";
 import { useDuet } from "../store";
 
 function Field({ label, hint, ...props }) {
@@ -17,15 +20,50 @@ function Field({ label, hint, ...props }) {
   );
 }
 
+function SectionLabel({ children }) {
+  return <Text style={styles.section}>{children}</Text>;
+}
+
+function ConnectorsList() {
+  const groups = [...new Set(CONNECTORS.map((c) => c.group))];
+  return (
+    <View style={{ gap: 14 }}>
+      <Text style={styles.hint}>
+        Connectors let Claude Duet read and act in your other apps, always asking before it sends, pays or deletes. They aren't
+        wired up in this build yet, so nothing here connects to a real account.
+      </Text>
+      {groups.map((group) => (
+        <View key={group} style={{ gap: 8 }}>
+          <Text style={styles.groupLabel}>{group}</Text>
+          {CONNECTORS.filter((c) => c.group === group).map((connector) => (
+            <View key={connector.id} style={styles.connector}>
+              <ConnectorLogo id={connector.id} size={40} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.connectorName}>{connector.name}</Text>
+                <Text numberOfLines={2} style={styles.connectorBlurb}>{connector.blurb}</Text>
+              </View>
+              <View style={styles.soon}>
+                <Text style={styles.soonText}>Soon</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export function SettingsSheet({ visible, onClose }) {
   const { settings, updateSettings, resetDemo, clearAll } = useDuet();
   const [form, setForm] = useState(settings);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [keyCheck, setKeyCheck] = useState({ state: "idle", message: "" });
 
   useEffect(() => {
     if (visible) {
       setForm(settings);
       setConfirmClear(false);
+      setKeyCheck({ state: "idle", message: "" });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
@@ -41,20 +79,49 @@ export function SettingsSheet({ visible, onClose }) {
     });
     onClose();
   };
+  const testKey = async () => {
+    setKeyCheck({ state: "checking", message: "" });
+    try {
+      await checkApiKey({ apiKey: form.apiKey.trim() });
+      setKeyCheck({ state: "ok", message: "Key works." });
+    } catch (error) {
+      setKeyCheck({ state: "error", message: error.message || String(error) });
+    }
+  };
 
   return (
-    <Sheet visible={visible} onClose={onClose} title="Settings">
+    <Sheet visible={visible} onClose={onClose} title="Settings" maxHeight="92%">
+      <SectionLabel>Profile</SectionLabel>
       <Field label="Your name" value={form.userName} onChangeText={set("userName")} autoCapitalize="words" />
+
+      <SectionLabel>Gemini</SectionLabel>
       <Field
-        label="Gemini API key"
+        label="API key"
         value={form.apiKey}
-        onChangeText={set("apiKey")}
+        onChangeText={(value) => {
+          set("apiKey")(value);
+          if (keyCheck.state !== "idle") setKeyCheck({ state: "idle", message: "" });
+        }}
         placeholder="AIza…"
         secureTextEntry
         autoCapitalize="none"
         autoCorrect={false}
-        hint="Stored on this device only (Keychain/Keystore on phones). A key inside an app can be extracted, so use a restricted, low-quota key for testing."
       />
+      <View style={styles.keyRow}>
+        <Pressable accessibilityRole="link" onPress={() => Linking.openURL(GEMINI_KEY_URL)} style={styles.linkButton}>
+          <Icon name="external-link" size={15} color={colors.accent} />
+          <Text style={styles.linkText}>Get a Gemini API key</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" onPress={testKey} disabled={keyCheck.state === "checking"} style={styles.testButton}>
+          {keyCheck.state === "checking" ? <ActivityIndicator size="small" color={colors.text} /> : <Text style={styles.testText}>Test key</Text>}
+        </Pressable>
+      </View>
+      {keyCheck.state === "ok" ? <Text style={[styles.status, { color: colors.success }]}>{keyCheck.message}</Text> : null}
+      {keyCheck.state === "error" ? <Text style={[styles.status, { color: colors.danger }]}>{keyCheck.message}</Text> : null}
+      <Text style={styles.hint}>
+        Opens Google AI Studio, where you create a key for free. The key stays on this device (Keychain/Keystore on phones). A key
+        inside an app can still be extracted, so use a restricted, low-quota key.
+      </Text>
       <Field label="Chat model" value={form.chatModel} onChangeText={set("chatModel")} autoCapitalize="none" autoCorrect={false} hint="Used for chat, files and dictation." />
       <Field label="Live (voice) model" value={form.liveModel} onChangeText={set("liveModel")} autoCapitalize="none" autoCorrect={false} hint="Used for the voice button, over the Gemini Live API." />
       <View style={{ gap: 8 }}>
@@ -68,6 +135,11 @@ export function SettingsSheet({ visible, onClose }) {
         </View>
       </View>
       <SheetButton label="Save" onPress={save} />
+
+      <SectionLabel>Connectors</SectionLabel>
+      <ConnectorsList />
+
+      <SectionLabel>Data</SectionLabel>
       <SheetButton label="Reset demo data" kind="secondary" onPress={() => { resetDemo(); onClose(); }} />
       <SheetButton
         label={confirmClear ? "Tap again to erase chats, tasks and files" : "Clear everything"}
@@ -163,6 +235,19 @@ export function NewFileSheet({ visible, onClose, onCreated }) {
 }
 
 const styles = StyleSheet.create({
+  section: { color: colors.text, fontSize: 13, fontWeight: "700", letterSpacing: 0.6, textTransform: "uppercase", marginTop: 10 },
+  groupLabel: { color: colors.textFaint, fontSize: 12, fontWeight: "600" },
+  connector: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.surfaceRaised, borderRadius: 14, padding: 10 },
+  connectorName: { color: colors.text, fontSize: 15, fontWeight: "600" },
+  connectorBlurb: { color: colors.textDim, fontSize: 12.5, lineHeight: 17, marginTop: 1 },
+  soon: { backgroundColor: colors.surfaceHigh, borderRadius: 10, paddingHorizontal: 9, paddingVertical: 4 },
+  soonText: { color: colors.textDim, fontSize: 11.5, fontWeight: "600" },
+  keyRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  linkButton: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 8 },
+  linkText: { color: colors.accent, fontSize: 14, fontWeight: "600" },
+  testButton: { minWidth: 88, height: 38, borderRadius: 12, backgroundColor: colors.surfaceHigh, alignItems: "center", justifyContent: "center", paddingHorizontal: 14 },
+  testText: { color: colors.text, fontSize: 14, fontWeight: "600" },
+  status: { fontSize: 13, lineHeight: 18 },
   label: { color: colors.textDim, fontSize: 12.5, fontWeight: "600" },
   input: { backgroundColor: colors.surfaceRaised, borderRadius: 12, color: colors.text, fontSize: 15.5, paddingHorizontal: 14, paddingVertical: 11, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.borderStrong },
   hint: { color: colors.textFaint, fontSize: 12, lineHeight: 16 },

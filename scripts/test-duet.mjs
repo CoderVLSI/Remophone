@@ -4,7 +4,9 @@
 import assert from "node:assert/strict";
 import { WebSocketServer, WebSocket } from "ws";
 import { LiveSession } from "../src/duet/gemini/live.js";
-import { runAgent, generateArtifact } from "../src/duet/gemini/rest.js";
+import { runAgent, generateArtifact, checkApiKey } from "../src/duet/gemini/rest.js";
+import { LOGOS } from "../src/duet/logos.js";
+import { CONNECTORS } from "../src/duet/connectors.js";
 import { executeTool, functionDeclarations } from "../src/duet/gemini/tools.js";
 import JSZip from "jszip";
 import { buildDeckPptx } from "../src/duet/pptx.js";
@@ -258,6 +260,30 @@ await test("buildDeckPptx writes a valid .pptx with every slide and the speaker 
   const notes1 = await zip.file("ppt/notesSlides/notesSlide1.xml").async("string");
   assert.match(notes1, /Open with the one-line summary/);
   await assert.rejects(buildDeckPptx({ kind: "document", title: "x", content: {} }), /Only presentations/);
+});
+
+await test("checkApiKey accepts a good key and surfaces Google's message for a bad one", async () => {
+  let seen;
+  const good = async (url, init) => {
+    seen = { url, key: init.headers["x-goog-api-key"] };
+    return { ok: true, status: 200, text: async () => "{}" };
+  };
+  assert.equal(await checkApiKey({ apiKey: "k1", fetchImpl: good }), true);
+  assert.match(seen.url, /\/v1beta\/models\?pageSize=1$/);
+  assert.equal(seen.key, "k1");
+  const bad = async () => ({ ok: false, status: 400, text: async () => JSON.stringify({ error: { message: "API key not valid." } }) });
+  await assert.rejects(checkApiKey({ apiKey: "nope", fetchImpl: bad }), /API key not valid/);
+  await assert.rejects(checkApiKey({ apiKey: "" }), /Paste a key/);
+});
+
+await test("every connector has a brand logo with a path and colour", () => {
+  assert.ok(CONNECTORS.length >= 8);
+  for (const connector of CONNECTORS) {
+    const logo = LOGOS[connector.id];
+    assert.ok(logo, `logo for ${connector.id}`);
+    assert.match(logo.hex, /^#[0-9A-F]{6}$/i);
+    assert.ok(logo.path.length > 20, `path for ${connector.id}`);
+  }
 });
 
 console.log(`\n${passed} passed`);
