@@ -178,10 +178,16 @@ export function liveFallbackAllowed(error) {
 }
 
 // Tries each model in order and resolves { session, model } for the first that completes setup.
-export async function connectWithFallback({ models, createSession, onSkip }) {
-  const failed = [];
+// When the list runs out, `getMore(triedModels)` may supply more (for example the newest Live
+// models the key can use) and is asked only once.
+export async function connectWithFallback({ models, createSession, onSkip, getMore }) {
+  const queue = [...models];
+  const tried = [];
   let lastError = null;
-  for (const model of models) {
+  let asked = false;
+  while (queue.length) {
+    const model = queue.shift();
+    tried.push(model);
     const session = createSession(model);
     try {
       await session.connect();
@@ -190,10 +196,17 @@ export async function connectWithFallback({ models, createSession, onSkip }) {
       session.close();
       if (!liveFallbackAllowed(error)) throw error;
       lastError = error;
-      failed.push(model);
       onSkip?.({ model, error });
+    }
+    if (!queue.length && !asked && getMore) {
+      asked = true;
+      try {
+        queue.push(...(await getMore(tried)).filter((m) => !tried.includes(m)));
+      } catch {
+        // discovery failed; fall through to the original error
+      }
     }
   }
   if (!lastError) throw new Error("No voice model is set. Add one in Settings.");
-  throw new Error(`${lastError.message} (tried ${failed.join(", ")})`);
+  throw new Error(`${lastError.message} (tried ${tried.join(", ")})`);
 }

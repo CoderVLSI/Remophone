@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { WebSocketServer, WebSocket } from "ws";
 import { LiveSession, connectWithFallback, liveFallbackAllowed } from "../src/duet/gemini/live.js";
-import { runAgent, generateArtifact, checkApiKey, generateWithFallback, modelChain, fallbackKind, resetModelCooldowns, stripThoughtSignatures, GeminiError } from "../src/duet/gemini/rest.js";
+import { runAgent, generateArtifact, checkApiKey, generateWithFallback, listModels, pickFallbacks, modelChain, fallbackKind, resetModelCooldowns, stripThoughtSignatures, GeminiError } from "../src/duet/gemini/rest.js";
 import { LOGOS } from "../src/duet/logos.js";
 import { CONNECTORS } from "../src/duet/connectors.js";
 import { executeTool, functionDeclarations } from "../src/duet/gemini/tools.js";
@@ -401,6 +401,94 @@ await test("Live: a refused model falls through to the next one; a bad key does 
   await assert.rejects(connectWithFallback({ models: ["badkey", "good"], createSession: make }), /API key not valid/);
   await assert.rejects(connectWithFallback({ models: ["retired"], createSession: make }), /not found.*\(tried retired\)/);
   assert.equal(liveFallbackAllowed(new Error("network down")), false);
+  wss.close();
+});
+
+const listBody = {
+  models: [
+    { name: "models/gemini-2.5-flash", supportedGenerationMethods: ["generateContent"] },
+    { name: "models/gemini-3.8-flash", supportedGenerationMethods: ["generateContent"] },
+    { name: "models/gemini-3.8-pro", supportedGenerationMethods: ["generateContent"] },
+    { name: "models/gemini-3.5-flash-lite", supportedGenerationMethods: ["generateContent"] },
+    { name: "models/gemini-3.9-flash-preview", supportedGenerationMethods: ["generateContent"] },
+    { name: "models/gemini-3.8-flash-image", supportedGenerationMethods: ["generateContent"] },
+    { name: "models/gemini-3.8-flash-tts", supportedGenerationMethods: ["generateContent"] },
+    { name: "models/gemini-embedding-002", supportedGenerationMethods: ["embedContent"] },
+    { name: "models/gemini-3.8-live", supportedGenerationMethods: ["bidiGenerateContent"] },
+    { name: "models/gemini-3.1-flash-live-preview", supportedGenerationMethods: ["bidiGenerateContent"] },
+    { name: "models/gemini-flash-latest", supportedGenerationMethods: ["generateContent"] },
+    { name: "models/gemma-3-27b-it", supportedGenerationMethods: ["generateContent"] },
+  ],
+};
+
+await test("listModels pages through results and caches per key", async () => {
+  resetModelCooldowns();
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return url.includes("pageToken=p2")
+      ? jsonRes(200, { models: [{ name: "models/b", supportedGenerationMethods: ["generateContent"] }] })
+      : jsonRes(200, { models: [{ name: "models/a", supportedGenerationMethods: ["generateContent"] }], nextPageToken: "p2" });
+  };
+  const first = await listModels({ apiKey: "k", fetchImpl });
+  assert.deepEqual(first.map((m) => m.id), ["a", "b"]);
+  await listModels({ apiKey: "k", fetchImpl });
+  assert.equal(calls.length, 2, "second call served from cache");
+  await listModels({ apiKey: "other", fetchImpl });
+  assert.equal(calls.length, 4);
+  resetModelCooldowns();
+});
+
+await test("pickFallbacks ranks newest, skips image/tts/embedding/gemma/live, keeps the alias first", () => {
+  const models = listBody.models.map((m) => ({ id: m.name.replace("models/", ""), methods: m.supportedGenerationMethods }));
+  assert.deepEqual(pickFallbacks(models, "chat", ["gemini-3.8-flash"], 4), ["gemini-flash-latest", "gemini-3.9-flash-preview", "gemini-3.8-pro", "gemini-3.5-flash-lite"]);
+  assert.deepEqual(pickFallbacks(models, "live", ["gemini-3.8-live"]), ["gemini-3.1-flash-live-preview"]);
+});
+
+await test("when the whole chain fails, chat discovers newer models from the key and uses one", async () => {
+  resetModelCooldowns();
+  const tried = [];
+  const fetchImpl = async (url) => {
+    if (url.includes("/models?pageSize")) return jsonRes(200, listBody);
+    const model = /models\/([^:]+):/.exec(url)[1];
+    tried.push(model);
+    return model === "gemini-3.9-flash-preview" ? jsonRes(200, okBody("found you")) : jsonRes(404, errBody(`models/${model} is not found`));
+  };
+  const out = await generateWithFallback({
+    settings: { apiKey: "k", chatModel: "gemini-3.8-flash", chatFallbacks: ["old-model"] },
+    body: { contents: [] },
+    fetchImpl,
+  });
+  assert.equal(out.model, "gemini-3.9-flash-preview");
+  assert.deepEqual(tried, ["gemini-3.8-flash", "old-model", "gemini-flash-latest", "gemini-3.9-flash-preview"]);
+  resetModelCooldowns();
+});
+
+await test("Live: when configured models are refused, newest discovered voice models are tried once", async () => {
+  const wss = new WebSocketServer({ port: 0 });
+  await new Promise((r) => wss.on("listening", r));
+  const port = wss.address().port;
+  const setups = [];
+  wss.on("connection", (socket) => {
+    socket.on("message", (raw) => {
+      const msg = JSON.parse(raw.toString());
+      if (!msg.setup) return;
+      setups.push(msg.setup.model);
+      if (msg.setup.model === "models/found-live") socket.send(Buffer.from(JSON.stringify({ setupComplete: {} })));
+      else socket.close(1008, `${msg.setup.model} is not found`);
+    });
+  });
+  let asked = 0;
+  const make = (model) => new LiveSession({ apiKey: "k", model, systemInstruction: "", WebSocketImpl: WebSocket, endpoint: `ws://127.0.0.1:${port}/live`, onEvent: () => {} });
+  const ok = await connectWithFallback({
+    models: ["gone-1", "gone-2"],
+    createSession: make,
+    getMore: async (tried) => (asked += 1, ["gone-1", "found-live"]),
+  });
+  assert.equal(ok.model, "found-live");
+  assert.equal(asked, 1);
+  assert.deepEqual(setups, ["models/gone-1", "models/gone-2", "models/found-live"]);
+  ok.session.close();
   wss.close();
 });
 

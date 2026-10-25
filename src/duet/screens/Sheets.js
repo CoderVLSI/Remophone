@@ -5,7 +5,7 @@ import Icon, { CHANNEL_ICONS } from "../components/Icon";
 import { KIND_META } from "../components/ArtifactCard";
 import { colors } from "../theme";
 import { VOICES } from "../gemini/config";
-import { checkApiKey } from "../gemini/rest";
+import { checkApiKey, listModels, pickFallbacks } from "../gemini/rest";
 import { CONNECTORS, GEMINI_KEY_URL } from "../connectors";
 import ConnectorLogo from "../components/ConnectorLogo";
 import { useDuet } from "../store";
@@ -60,12 +60,14 @@ export function SettingsSheet({ visible, onClose }) {
   const [form, setForm] = useState({ ...settings, chatFallbacksText: (settings.chatFallbacks || []).join(", "), liveFallbacksText: (settings.liveFallbacks || []).join(", ") });
   const [confirmClear, setConfirmClear] = useState(false);
   const [keyCheck, setKeyCheck] = useState({ state: "idle", message: "" });
+  const [modelCheck, setModelCheck] = useState({ state: "idle" });
 
   useEffect(() => {
     if (visible) {
       setForm({ ...settings, chatFallbacksText: (settings.chatFallbacks || []).join(", "), liveFallbacksText: (settings.liveFallbacks || []).join(", ") });
       setConfirmClear(false);
       setKeyCheck({ state: "idle", message: "" });
+      setModelCheck({ state: "idle" });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
@@ -82,6 +84,25 @@ export function SettingsSheet({ visible, onClose }) {
       userName: form.userName.trim() || settings.userName,
     });
     onClose();
+  };
+  const checkModels = async () => {
+    setModelCheck({ state: "checking" });
+    try {
+      const models = await listModels({ apiKey: form.apiKey.trim(), force: true });
+      const ids = new Set(models.map((m) => m.id));
+      const rows = (names) => names.map((name) => ({ id: name, ok: ids.has(name.replace(/^models\//, "")) }));
+      const chat = [form.chatModel.trim(), ...splitModels(form.chatFallbacksText)].filter(Boolean);
+      const live = [form.liveModel.trim(), ...splitModels(form.liveFallbacksText)].filter(Boolean);
+      setModelCheck({
+        state: "done",
+        chat: rows(chat),
+        live: rows(live),
+        newestChat: pickFallbacks(models, "chat", [form.chatModel.trim()]),
+        newestLive: pickFallbacks(models, "live", [form.liveModel.trim()]),
+      });
+    } catch (error) {
+      setModelCheck({ state: "error", message: error.message || String(error) });
+    }
   };
   const testKey = async () => {
     setKeyCheck({ state: "checking", message: "" });
@@ -144,6 +165,38 @@ export function SettingsSheet({ visible, onClose }) {
         autoCorrect={false}
         hint="Same idea for the voice button. Older Live models are being retired, so check these still exist."
       />
+      <Pressable accessibilityRole="button" onPress={checkModels} disabled={modelCheck.state === "checking"} style={styles.testButton}>
+        {modelCheck.state === "checking" ? <ActivityIndicator size="small" color={colors.text} /> : <Text style={styles.testText}>Check which models my key can use</Text>}
+      </Pressable>
+      {modelCheck.state === "error" ? <Text style={[styles.status, { color: colors.danger }]}>{modelCheck.message}</Text> : null}
+      {modelCheck.state === "done" ? (
+        <View style={{ gap: 6 }}>
+          {[["Chat", modelCheck.chat], ["Voice", modelCheck.live]].map(([label, rows]) => (
+            <View key={label} style={{ gap: 3 }}>
+              <Text style={styles.groupLabel}>{label}</Text>
+              {rows.map((row) => (
+                <Text key={row.id} style={[styles.status, { color: row.ok ? colors.success : colors.danger }]}>
+                  {row.ok ? "✓" : "✗"} {row.id}{row.ok ? "" : " (not available to this key)"}
+                </Text>
+              ))}
+            </View>
+          ))}
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              set("chatFallbacksText")(modelCheck.newestChat.join(", "));
+              set("liveFallbacksText")(modelCheck.newestLive.join(", "));
+            }}
+            style={styles.linkButton}
+          >
+            <Icon name="zap" size={15} color={colors.accent} />
+            <Text style={styles.linkText}>Fill fallbacks with the newest my key can use</Text>
+          </Pressable>
+          <Text style={styles.hint}>
+            Newest chat: {modelCheck.newestChat.join(", ") || "none found"}. Newest voice: {modelCheck.newestLive.join(", ") || "none found"}.
+          </Text>
+        </View>
+      ) : null}
       <View style={{ gap: 8 }}>
         <Text style={styles.label}>Voice</Text>
         <View style={styles.chips}>

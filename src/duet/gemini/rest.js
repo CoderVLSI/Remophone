@@ -34,6 +34,54 @@ export async function generateContent({ apiKey, model, body, signal, fetchImpl =
   return json;
 }
 
+// ----- model discovery -----
+// Asks Google which models this key can use. Cached for an hour per key.
+let modelCache = null;
+
+export async function listModels({ apiKey, fetchImpl = fetch, now = Date.now, force = false }) {
+  if (!apiKey) throw new GeminiError("Paste a key first.", 401);
+  if (!force && modelCache && modelCache.key === apiKey && now() - modelCache.at < 60 * 60 * 1000) return modelCache.models;
+  const models = [];
+  let pageToken = "";
+  for (let page = 0; page < 10; page += 1) {
+    const url = `${REST_BASE}/models?pageSize=100${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`;
+    const response = await fetchImpl(url, { headers: { "x-goog-api-key": apiKey } });
+    const text = await response.text();
+    let json = null;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = null;
+    }
+    if (!response.ok) throw new GeminiError(json?.error?.message || `HTTP ${response.status}`, response.status);
+    for (const model of json?.models || []) {
+      models.push({ id: String(model.name || "").replace(/^models\//, ""), methods: model.supportedGenerationMethods || [], displayName: model.displayName || "" });
+    }
+    pageToken = json?.nextPageToken;
+    if (!pageToken) break;
+  }
+  modelCache = { key: apiKey, at: now(), models };
+  return models;
+}
+
+const NOT_CHAT = /(image|tts|embed|aqa|imagen|veo|robotics|computer-use|learnlm|gemma|deep-research|lyria|live|native-audio)/i;
+const versionOf = (id) => (/-latest$/.test(id) ? 1000 : parseFloat(/gemini-(\d+(?:\.\d+)?)/.exec(id)?.[1] || "0"));
+const familyRank = (id) => (/flash-lite/.test(id) ? 1 : /flash/.test(id) ? 3 : /pro/.test(id) ? 2 : 0);
+const isPreview = (id) => (/preview|exp/.test(id) ? 1 : 0);
+
+// Newest Gemini models for "chat" (generateContent) or "live" (bidiGenerateContent):
+// highest version first, then flash over pro over lite, then stable over preview.
+export function pickFallbacks(models, kind, exclude = [], limit = 3) {
+  const method = kind === "live" ? "bidiGenerateContent" : "generateContent";
+  return models
+    .filter((m) => m.id.startsWith("gemini-") && m.methods.includes(method))
+    .filter((m) => (kind === "live" ? true : !NOT_CHAT.test(m.id)))
+    .filter((m) => !exclude.includes(m.id))
+    .sort((a, b) => versionOf(b.id) - versionOf(a.id) || familyRank(b.id) - familyRank(a.id) || isPreview(a.id) - isPreview(b.id) || a.id.localeCompare(b.id))
+    .slice(0, limit)
+    .map((m) => m.id);
+}
+
 // ----- model fallback -----
 // Order to try: the chosen model, then the fallbacks. A model that just failed is moved to
 // the back of the line for a while so every message doesn't pay for a dead model first.
@@ -42,6 +90,7 @@ const cooldowns = new Map();
 
 export function resetModelCooldowns() {
   cooldowns.clear();
+  modelCache = null;
 }
 
 export function markModelFailed(model, kind = "gone", now = Date.now()) {
@@ -82,12 +131,18 @@ export function stripThoughtSignatures(body) {
   };
 }
 
-// Tries each model in the chain. Resolves { json, model, fellBack }.
+// Tries each model in the chain, then (once) the newest models the key can actually use.
+// Resolves { json, model, fellBack }.
 export async function generateWithFallback({ settings, body, signal, fetchImpl, producedBy = null, onFallback, now = Date.now }) {
   const chain = modelChain(settings.chatModel, settings.chatFallbacks, now());
   if (!chain.length) throw new GeminiError("No chat model is set. Add one in Settings.", 400);
+  const queue = [...chain];
+  const tried = [];
   const failures = [];
-  for (const model of chain) {
+  let discovered = false;
+  while (queue.length) {
+    const model = queue.shift();
+    tried.push(model);
     try {
       const sendBody = producedBy && producedBy !== model ? stripThoughtSignatures(body) : body;
       const json = await generateContent({ apiKey: settings.apiKey, model, body: sendBody, signal, fetchImpl });
@@ -98,6 +153,15 @@ export async function generateWithFallback({ settings, body, signal, fetchImpl, 
       cooldowns.set(model, now() + COOLDOWN_MS[kind]);
       failures.push({ model, error });
       onFallback?.({ model, error });
+    }
+    if (!queue.length && !discovered) {
+      discovered = true;
+      try {
+        const models = await listModels({ apiKey: settings.apiKey, fetchImpl, now });
+        queue.push(...pickFallbacks(models, "chat", tried));
+      } catch {
+        // can't list models; report the original failures instead
+      }
     }
   }
   const last = failures[failures.length - 1].error;

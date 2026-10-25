@@ -81,6 +81,11 @@ export function DuetProvider({ children }) {
       }
       const apiKey = (await getSecret()) || process.env.EXPO_PUBLIC_GEMINI_API_KEY || "";
       if (cancelled) return;
+      // Fallback lists saved by an older build (which listed retiring models) are replaced once.
+      if (loadedSettings.fallbackVersion !== DEFAULT_SETTINGS.fallbackVersion) {
+        delete loadedSettings.chatFallbacks;
+        delete loadedSettings.liveFallbacks;
+      }
       const merged = { ...DEFAULT_SETTINGS, ...loadedSettings, apiKey };
       settingsRef.current = merged;
       setSettings(merged);

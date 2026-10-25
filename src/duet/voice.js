@@ -1,5 +1,5 @@
 import { LiveSession, connectWithFallback } from "./gemini/live";
-import { markModelFailed, modelChain } from "./gemini/rest";
+import { listModels, markModelFailed, modelChain, pickFallbacks } from "./gemini/rest";
 import { executeTool } from "./gemini/tools";
 import { buildSystemInstruction } from "./gemini/prompts";
 import { createLiveAudio } from "./audio/liveAudio";
@@ -129,6 +129,7 @@ export function createVoiceController(deps) {
           createSession: (model) =>
             new LiveSession({ apiKey: settings.apiKey, model, voice: settings.voice, systemInstruction, onEvent: handleEvent }),
           onSkip: ({ model }) => markModelFailed(model, "gone"),
+          getMore: async (tried) => pickFallbacks(await listModels({ apiKey: settings.apiKey }), "live", tried),
         });
         session = connected.session;
         await audio.start();
