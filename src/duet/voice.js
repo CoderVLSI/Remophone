@@ -1,4 +1,5 @@
-import { LiveSession } from "./gemini/live";
+import { LiveSession, connectWithFallback } from "./gemini/live";
+import { markModelFailed, modelChain } from "./gemini/rest";
 import { executeTool } from "./gemini/tools";
 import { buildSystemInstruction } from "./gemini/prompts";
 import { createLiveAudio } from "./audio/liveAudio";
@@ -12,7 +13,7 @@ export function createVoiceController(deps) {
   let pendingUser = "";
   let pendingAssistant = "";
   let lastLevelAt = 0;
-  let state = { status: "idle", level: 0, muted: false, error: null, userText: "", assistantText: "" };
+  let state = { status: "idle", level: 0, muted: false, error: null, userText: "", assistantText: "", model: null, fellBack: false };
 
   const set = (patch) => {
     state = { ...state, ...patch };
@@ -121,17 +122,17 @@ export function createVoiceController(deps) {
         return;
       }
 
-      session = new LiveSession({
-        apiKey: settings.apiKey,
-        model: settings.liveModel,
-        voice: settings.voice,
-        systemInstruction: buildSystemInstruction(deps.getState(), { voice: true, userName: settings.userName }),
-        onEvent: handleEvent,
-      });
+      const systemInstruction = buildSystemInstruction(deps.getState(), { voice: true, userName: settings.userName });
       try {
-        await session.connect();
+        const connected = await connectWithFallback({
+          models: modelChain(settings.liveModel, settings.liveFallbacks),
+          createSession: (model) =>
+            new LiveSession({ apiKey: settings.apiKey, model, voice: settings.voice, systemInstruction, onEvent: handleEvent }),
+          onSkip: ({ model }) => markModelFailed(model, "gone"),
+        });
+        session = connected.session;
         await audio.start();
-        set({ status: "listening" });
+        set({ status: "listening", model: connected.model, fellBack: connected.model !== settings.liveModel });
       } catch (error) {
         await cleanup();
         set({ status: "error", error: error.message || String(error) });

@@ -3,8 +3,8 @@
 // Run with: npm run test:duet
 import assert from "node:assert/strict";
 import { WebSocketServer, WebSocket } from "ws";
-import { LiveSession } from "../src/duet/gemini/live.js";
-import { runAgent, generateArtifact, checkApiKey } from "../src/duet/gemini/rest.js";
+import { LiveSession, connectWithFallback, liveFallbackAllowed } from "../src/duet/gemini/live.js";
+import { runAgent, generateArtifact, checkApiKey, generateWithFallback, modelChain, fallbackKind, resetModelCooldowns, stripThoughtSignatures, GeminiError } from "../src/duet/gemini/rest.js";
 import { LOGOS } from "../src/duet/logos.js";
 import { CONNECTORS } from "../src/duet/connectors.js";
 import { executeTool, functionDeclarations } from "../src/duet/gemini/tools.js";
@@ -284,6 +284,124 @@ await test("every connector has a brand logo with a path and colour", () => {
     assert.match(logo.hex, /^#[0-9A-F]{6}$/i);
     assert.ok(logo.path.length > 20, `path for ${connector.id}`);
   }
+});
+
+const jsonRes = (status, body) => ({ ok: status < 400, status, text: async () => JSON.stringify(body) });
+const okBody = (text) => ({ candidates: [{ content: { role: "model", parts: [{ text }] } }] });
+const errBody = (message) => ({ error: { message } });
+
+await test("modelChain dedupes and strips the models/ prefix", () => {
+  resetModelCooldowns();
+  assert.deepEqual(modelChain("a", ["models/b", "a", " c ", ""]), ["a", "b", "c"]);
+  assert.deepEqual(modelChain("", []), []);
+});
+
+await test("fallbackKind only retries model-specific and capacity errors", () => {
+  assert.equal(fallbackKind(new GeminiError("models/x is not found for API version v1beta", 404)), "gone");
+  assert.equal(fallbackKind(new GeminiError("Model is not supported for generateContent", 400)), "gone");
+  assert.equal(fallbackKind(new GeminiError("Resource exhausted", 429)), "busy");
+  assert.equal(fallbackKind(new GeminiError("The model is overloaded", 503)), "busy");
+  assert.equal(fallbackKind(new GeminiError("API key not valid. Please pass a valid API key.", 400)), null);
+  assert.equal(fallbackKind(new GeminiError("API key not valid", 404)), null);
+  assert.equal(fallbackKind(new GeminiError("Invalid JSON payload", 400)), null);
+  assert.equal(fallbackKind(new GeminiError("denied", 403)), null);
+  assert.equal(fallbackKind(new Error("network")), null);
+});
+
+await test("generateWithFallback moves down the chain and skips a dead model next time", async () => {
+  resetModelCooldowns();
+  const tried = [];
+  const fetchImpl = async (url) => {
+    const model = /models\/([^:]+):/.exec(url)[1];
+    tried.push(model);
+    if (model === "gemini-3.8-flash") return jsonRes(404, errBody("models/gemini-3.8-flash is not found"));
+    if (model === "flash-latest") return jsonRes(503, errBody("overloaded"));
+    return jsonRes(200, okBody("from " + model));
+  };
+  const settings = { apiKey: "k", chatModel: "gemini-3.8-flash", chatFallbacks: ["flash-latest", "gemini-2.5-flash"] };
+  const seen = [];
+  const first = await generateWithFallback({ settings, body: { contents: [] }, fetchImpl, onFallback: (f) => seen.push(f.model) });
+  assert.equal(first.model, "gemini-2.5-flash");
+  assert.equal(first.fellBack, true);
+  assert.deepEqual(tried, ["gemini-3.8-flash", "flash-latest", "gemini-2.5-flash"]);
+  assert.deepEqual(seen, ["gemini-3.8-flash", "flash-latest"]);
+  tried.length = 0;
+  const second = await generateWithFallback({ settings, body: { contents: [] }, fetchImpl });
+  assert.deepEqual(tried, ["gemini-2.5-flash"], "dead models are not retried right away");
+  assert.equal(second.model, "gemini-2.5-flash");
+  resetModelCooldowns();
+});
+
+await test("generateWithFallback does not fall back on a bad key and reports every model when all fail", async () => {
+  resetModelCooldowns();
+  let calls = 0;
+  const badKey = async () => (calls += 1, jsonRes(400, errBody("API key not valid. Please pass a valid API key.")));
+  await assert.rejects(generateWithFallback({ settings: { apiKey: "k", chatModel: "a", chatFallbacks: ["b"] }, body: {}, fetchImpl: badKey }), /API key not valid/);
+  assert.equal(calls, 1);
+  const allDown = async () => jsonRes(503, errBody("overloaded"));
+  await assert.rejects(generateWithFallback({ settings: { apiKey: "k", chatModel: "a", chatFallbacks: ["b"] }, body: {}, fetchImpl: allDown }), /overloaded \(tried a, b\)/);
+  resetModelCooldowns();
+});
+
+await test("thought signatures are stripped when a different model takes over mid tool call", async () => {
+  resetModelCooldowns();
+  const body = { contents: [{ role: "model", parts: [{ functionCall: { name: "x", args: {} }, thoughtSignature: "sig" }] }] };
+  assert.equal(stripThoughtSignatures(body).contents[0].parts[0].thoughtSignature, undefined);
+  assert.equal(body.contents[0].parts[0].thoughtSignature, "sig", "original is untouched");
+  const sent = [];
+  const fetchImpl = async (url, init) => {
+    sent.push({ url, body: JSON.parse(init.body) });
+    return /3\.8/.test(url) ? jsonRes(404, errBody("not found")) : jsonRes(200, okBody("ok"));
+  };
+  await generateWithFallback({ settings: { apiKey: "k", chatModel: "gemini-3.8-flash", chatFallbacks: ["gemini-2.5-flash"] }, body, producedBy: "gemini-3.8-flash", fetchImpl });
+  assert.equal(sent[0].body.contents[0].parts[0].thoughtSignature, "sig", "same model keeps its signature");
+  assert.equal(sent[1].body.contents[0].parts[0].thoughtSignature, undefined, "other model gets none");
+  resetModelCooldowns();
+});
+
+await test("runAgent reports which model answered when it fell back", async () => {
+  resetModelCooldowns();
+  const fetchImpl = async (url) => (/3\.8/.test(url) ? jsonRes(404, errBody("not found")) : jsonRes(200, okBody("hello")));
+  const out = await runAgent({
+    settings: { apiKey: "k", chatModel: "gemini-3.8-flash", chatFallbacks: ["gemini-2.5-flash"] },
+    history: [{ role: "user", text: "hi" }],
+    systemInstruction: "",
+    executeTool: async () => ({}),
+    fetchImpl,
+  });
+  assert.deepEqual({ text: out.text, model: out.model, fellBack: out.fellBack }, { text: "hello", model: "gemini-2.5-flash", fellBack: true });
+  resetModelCooldowns();
+});
+
+await test("Live: a refused model falls through to the next one; a bad key does not", async () => {
+  const wss = new WebSocketServer({ port: 0 });
+  await new Promise((r) => wss.on("listening", r));
+  const port = wss.address().port;
+  const setups = [];
+  wss.on("connection", (socket) => {
+    socket.on("message", (raw) => {
+      const msg = JSON.parse(raw.toString());
+      if (!msg.setup) return;
+      setups.push(msg.setup.model);
+      if (msg.setup.model === "models/retired") socket.close(1008, "models/retired is not found for API version v1beta");
+      else if (msg.setup.model === "models/badkey") socket.close(1007, "API key not valid. Please pass a valid API key.");
+      else socket.send(Buffer.from(JSON.stringify({ setupComplete: {} })));
+    });
+  });
+  const events = [];
+  const make = (model) =>
+    new LiveSession({ apiKey: "k", model, systemInstruction: "", WebSocketImpl: WebSocket, endpoint: `ws://127.0.0.1:${port}/live`, onEvent: (e) => events.push(e.type) });
+  const skipped = [];
+  const ok = await connectWithFallback({ models: ["retired", "good", "never"], createSession: make, onSkip: (s) => skipped.push(s.model) });
+  assert.equal(ok.model, "good");
+  assert.deepEqual(skipped, ["retired"]);
+  assert.deepEqual(setups, ["models/retired", "models/good"]);
+  assert.ok(!events.includes("close"), "a refused model must not look like a dropped call");
+  ok.session.close();
+  await assert.rejects(connectWithFallback({ models: ["badkey", "good"], createSession: make }), /API key not valid/);
+  await assert.rejects(connectWithFallback({ models: ["retired"], createSession: make }), /not found.*\(tried retired\)/);
+  assert.equal(liveFallbackAllowed(new Error("network down")), false);
+  wss.close();
 });
 
 console.log(`\n${passed} passed`);

@@ -34,6 +34,76 @@ export async function generateContent({ apiKey, model, body, signal, fetchImpl =
   return json;
 }
 
+// ----- model fallback -----
+// Order to try: the chosen model, then the fallbacks. A model that just failed is moved to
+// the back of the line for a while so every message doesn't pay for a dead model first.
+const COOLDOWN_MS = { gone: 30 * 60 * 1000, busy: 2 * 60 * 1000 };
+const cooldowns = new Map();
+
+export function resetModelCooldowns() {
+  cooldowns.clear();
+}
+
+export function markModelFailed(model, kind = "gone", now = Date.now()) {
+  cooldowns.set(model, now + COOLDOWN_MS[kind]);
+}
+
+export function modelChain(primary, fallbacks = [], now = Date.now()) {
+  const names = [primary, ...(fallbacks || [])]
+    .map((name) => String(name || "").trim().replace(/^models\//, ""))
+    .filter(Boolean);
+  const unique = [...new Set(names)];
+  const ready = unique.filter((name) => (cooldowns.get(name) || 0) <= now);
+  const cooling = unique.filter((name) => (cooldowns.get(name) || 0) > now);
+  return [...ready, ...cooling];
+}
+
+// "gone": the model is missing or unsupported. "busy": rate limit or server trouble.
+// Anything else (bad key, blocked prompt, bad request) would fail on every model.
+export function fallbackKind(error) {
+  if (!(error instanceof GeminiError)) return null;
+  const message = error.message || "";
+  if (/api[ _]?key/i.test(message)) return null;
+  if (error.status === 404) return "gone";
+  if (error.status === 400 && /not found|not supported|unsupported|does not exist|no longer available|deprecated/i.test(message)) return "gone";
+  if ([429, 500, 502, 503, 504].includes(error.status)) return "busy";
+  return null;
+}
+
+// Thought signatures only make sense to the model that issued them.
+export function stripThoughtSignatures(body) {
+  if (!body?.contents) return body;
+  return {
+    ...body,
+    contents: body.contents.map((turn) => ({
+      ...turn,
+      parts: (turn.parts || []).map(({ thoughtSignature, ...rest }) => rest),
+    })),
+  };
+}
+
+// Tries each model in the chain. Resolves { json, model, fellBack }.
+export async function generateWithFallback({ settings, body, signal, fetchImpl, producedBy = null, onFallback, now = Date.now }) {
+  const chain = modelChain(settings.chatModel, settings.chatFallbacks, now());
+  if (!chain.length) throw new GeminiError("No chat model is set. Add one in Settings.", 400);
+  const failures = [];
+  for (const model of chain) {
+    try {
+      const sendBody = producedBy && producedBy !== model ? stripThoughtSignatures(body) : body;
+      const json = await generateContent({ apiKey: settings.apiKey, model, body: sendBody, signal, fetchImpl });
+      return { json, model, fellBack: model !== settings.chatModel };
+    } catch (error) {
+      const kind = fallbackKind(error);
+      if (!kind) throw error;
+      cooldowns.set(model, now() + COOLDOWN_MS[kind]);
+      failures.push({ model, error });
+      onFallback?.({ model, error });
+    }
+  }
+  const last = failures[failures.length - 1].error;
+  throw new GeminiError(`${last.message} (tried ${failures.map((f) => f.model).join(", ")})`, last.status);
+}
+
 function partsText(content) {
   return (content?.parts || [])
     .filter((p) => typeof p.text === "string" && !p.thought)
@@ -65,25 +135,29 @@ export async function runAgent({
   fetchImpl,
 }) {
   const contents = toGeminiContents(history);
+  let producedBy = null;
+  let usedModel = null;
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-    const json = await generateContent({
-      apiKey: settings.apiKey,
-      model: settings.chatModel,
+    const { json, model } = await generateWithFallback({
+      settings,
       signal,
       fetchImpl,
+      producedBy,
       body: {
         systemInstruction: { parts: [{ text: systemInstruction }] },
         contents,
         tools: toolsConfig,
       },
     });
+    usedModel = model;
+    producedBy = model;
     const candidate = json?.candidates?.[0];
     if (!candidate?.content) {
       const reason = json?.promptFeedback?.blockReason || candidate?.finishReason || "empty response";
       throw new GeminiError(`Gemini returned no answer (${reason}).`);
     }
     const calls = (candidate.content.parts || []).filter((p) => p.functionCall);
-    if (!calls.length) return { text: partsText(candidate.content).trim() };
+    if (!calls.length) return { text: partsText(candidate.content).trim(), model: usedModel, fellBack: usedModel !== settings.chatModel };
 
     // Keep the model turn exactly as received so thought signatures survive the round trip.
     contents.push(candidate.content);
@@ -103,7 +177,7 @@ export async function runAgent({
     }
     contents.push({ role: "user", parts: responses });
   }
-  return { text: "I ran into a loop while working on that. Try rephrasing the request." };
+  return { text: "I ran into a loop while working on that. Try rephrasing the request.", model: usedModel, fellBack: usedModel !== settings.chatModel };
 }
 
 // Structured generation for the Make tab.
@@ -120,9 +194,8 @@ export async function generateArtifact({ settings, kind, title, brief, existing,
       ].join("\n")
     : [`Create a ${kind} titled "${title}".`, `Brief: ${brief}`].join("\n");
 
-  const json = await generateContent({
-    apiKey: settings.apiKey,
-    model: settings.chatModel,
+  const { json } = await generateWithFallback({
+    settings,
     signal,
     fetchImpl,
     body: {
@@ -141,9 +214,8 @@ export async function generateArtifact({ settings, kind, title, brief, existing,
 
 // Dictation: send a short recording to Gemini and get the words back.
 export async function transcribeAudio({ settings, base64, mimeType, signal, fetchImpl }) {
-  const json = await generateContent({
-    apiKey: settings.apiKey,
-    model: settings.chatModel,
+  const { json } = await generateWithFallback({
+    settings,
     signal,
     fetchImpl,
     body: {

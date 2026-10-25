@@ -79,7 +79,7 @@ const SUGGESTIONS = [
 ];
 
 export default function ChatScreen({ channelId, onOpenArtifact, onOpenChannel, onPlus, onVoice, bottomInset }) {
-  const { state, busy, sendMessage, dictationState, startDictation, finishDictation, cancelDictation } = useDuet();
+  const { state, busy, modelNotice, sendMessage, dictationState, startDictation, finishDictation, cancelDictation } = useDuet();
   const [draft, setDraft] = useState("");
   const [notice, setNotice] = useState(null);
   const scrollRef = useRef(null);
@@ -173,6 +173,7 @@ export default function ChatScreen({ channelId, onOpenArtifact, onOpenChannel, o
       </ScrollView>
 
       <Text style={styles.disclaimer}>Claude Duet is AI and can make mistakes.</Text>
+      {modelNotice ? <Text style={styles.modelNotice}>{modelNotice}</Text> : null}
       {notice ? <Text style={styles.notice}>{notice}</Text> : null}
       <View style={{ paddingHorizontal: 12, paddingBottom: bottomInset }}>
         <Composer
@@ -205,6 +206,7 @@ const styles = StyleSheet.create({
   channelChipText: { color: colors.textDim, fontSize: 12.5 },
   inlineChip: { backgroundColor: colors.surfaceHigh, color: colors.text, fontSize: 14, borderRadius: 8, overflow: "hidden" },
   disclaimer: { color: colors.textFaint, fontSize: 11.5, textAlign: "center", paddingVertical: 8 },
+  modelNotice: { color: colors.textFaint, fontSize: 11.5, textAlign: "center", paddingHorizontal: 20, paddingBottom: 6 },
   notice: { color: colors.danger, fontSize: 12.5, textAlign: "center", paddingHorizontal: 20, paddingBottom: 6 },
   dots: { flexDirection: "row", gap: 6, paddingVertical: 10 },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent },

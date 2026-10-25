@@ -51,6 +51,7 @@ export function DuetProvider({ children }) {
   const settingsRef = useRef(settings);
   const [hydrated, setHydrated] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [modelNotice, setModelNotice] = useState(null);
   const busyRef = useRef(false);
   const routedRef = useRef(null);
   const [voice, setVoice] = useState({ status: "idle", level: 0, muted: false, error: null, userText: "", assistantText: "" });
@@ -252,15 +253,17 @@ export function DuetProvider({ children }) {
       busyRef.current = true;
       setBusy(true);
       routedRef.current = null;
+      setModelNotice(null);
       addMessage({ role: "user", text: trimmed, channel });
       try {
         const history = stateRef.current.messages.slice(-24).map((m) => ({ role: m.role, text: m.text }));
-        const { text: reply } = await runAgent({
+        const { text: reply, model, fellBack } = await runAgent({
           settings: settingsRef.current,
           history,
           systemInstruction: buildSystemInstruction(stateRef.current, { userName: settingsRef.current.userName }),
           executeTool: (name, args) => executeTool(name, args, toolContext),
         });
+        if (fellBack) setModelNotice(`${settingsRef.current.chatModel} wasn't available, so ${model} answered.`);
         addMessage({ role: "assistant", text: reply || "Done.", channel: routedRef.current || channel });
       } catch (error) {
         addMessage({ role: "assistant", text: error.message || String(error), error: true, channel });
@@ -340,6 +343,7 @@ export function DuetProvider({ children }) {
       settings,
       hydrated,
       busy,
+      modelNotice,
       voice,
       dictationState,
       updateSettings,
@@ -362,7 +366,7 @@ export function DuetProvider({ children }) {
       clearAll,
     }),
     [
-      state, settings, hydrated, busy, voice, dictationState, updateSettings, sendMessage, addChannel, addTask,
+      state, settings, hydrated, busy, modelNotice, voice, dictationState, updateSettings, sendMessage, addChannel, addTask,
       togglePin, updateArtifactContent, deleteArtifact, resolveTask, createArtifact, editArtifact, startVoice,
       stopVoice, setVoiceMuted, startDictation, finishDictation, cancelDictation, resetDemo, clearAll,
     ],

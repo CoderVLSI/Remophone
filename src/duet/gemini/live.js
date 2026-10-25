@@ -27,6 +27,7 @@ export class LiveSession {
     this.tools = tools;
     this.socket = null;
     this.ready = false;
+    this.everReady = false;
     this.closed = false;
   }
 
@@ -68,6 +69,7 @@ export class LiveSession {
         if (message.setupComplete && !settled) {
           settled = true;
           this.ready = true;
+          this.everReady = true;
           this.onEvent({ type: "ready" });
           resolve();
           return;
@@ -90,9 +92,14 @@ export class LiveSession {
         const reason = event?.reason ? `: ${event.reason}` : "";
         if (!settled) {
           settled = true;
-          reject(new Error(`Gemini Live closed the connection${reason} (code ${event?.code ?? "?"})`));
+          const error = new Error(`Gemini Live closed the connection${reason} (code ${event?.code ?? "?"})`);
+          // Lets connectWithFallback tell "this model was refused" from "the network is down".
+          error.code = event?.code;
+          error.reason = event?.reason || "";
+          reject(error);
         }
-        if (!this.closed) this.onEvent({ type: "close", code: event?.code, reason: event?.reason });
+        // A close before setup finished is reported through connect()'s rejection instead.
+        if (!this.closed && this.everReady) this.onEvent({ type: "close", code: event?.code, reason: event?.reason });
       };
     });
   }
@@ -161,4 +168,32 @@ export class LiveSession {
     }
     if (message.goAway) this.onEvent({ type: "goAway", timeLeft: message.goAway.timeLeft });
   }
+}
+
+// A refused model (not found, retired, unsupported) closes the socket with a reason. A bad
+// key or a network failure would fail on every model, so those are not retried.
+export function liveFallbackAllowed(error) {
+  if (!error || error.code === undefined || error.code === 1006) return false;
+  return !/api[ _]?key/i.test(`${error.reason || ""} ${error.message || ""}`);
+}
+
+// Tries each model in order and resolves { session, model } for the first that completes setup.
+export async function connectWithFallback({ models, createSession, onSkip }) {
+  const failed = [];
+  let lastError = null;
+  for (const model of models) {
+    const session = createSession(model);
+    try {
+      await session.connect();
+      return { session, model };
+    } catch (error) {
+      session.close();
+      if (!liveFallbackAllowed(error)) throw error;
+      lastError = error;
+      failed.push(model);
+      onSkip?.({ model, error });
+    }
+  }
+  if (!lastError) throw new Error("No voice model is set. Add one in Settings.");
+  throw new Error(`${lastError.message} (tried ${failed.join(", ")})`);
 }

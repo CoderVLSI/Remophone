@@ -53,6 +53,7 @@ export default function VoiceOverlay({ visible, channelId, onClose }) {
         <View style={styles.dim} />
         <View style={[styles.top, { paddingTop: TOP_INSET + 6 }]}>
           <Text style={styles.status}>{failed ? "Voice stopped" : STATUS_TEXT[voice.status]}</Text>
+          {voice.fellBack && !failed ? <Text style={styles.modelNote}>Using {voice.model}</Text> : null}
         </View>
 
         <View style={styles.center}>
@@ -102,6 +103,7 @@ const styles = StyleSheet.create({
   backdrop: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%" },
   dim: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.62)" },
   top: { alignItems: "center", paddingBottom: 8 },
+  modelNote: { color: colors.textFaint, fontSize: 12, marginTop: 3 },
   status: { color: colors.textDim, fontSize: 14, fontWeight: "500" },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   halo: { position: "absolute", width: 170, height: 170, borderRadius: 85, backgroundColor: colors.accent },

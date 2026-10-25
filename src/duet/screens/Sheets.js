@@ -20,6 +20,8 @@ function Field({ label, hint, ...props }) {
   );
 }
 
+const splitModels = (text) => String(text || "").split(/[,\n]/).map((name) => name.trim()).filter(Boolean);
+
 function SectionLabel({ children }) {
   return <Text style={styles.section}>{children}</Text>;
 }
@@ -55,13 +57,13 @@ function ConnectorsList() {
 
 export function SettingsSheet({ visible, onClose }) {
   const { settings, updateSettings, resetDemo, clearAll } = useDuet();
-  const [form, setForm] = useState(settings);
+  const [form, setForm] = useState({ ...settings, chatFallbacksText: (settings.chatFallbacks || []).join(", "), liveFallbacksText: (settings.liveFallbacks || []).join(", ") });
   const [confirmClear, setConfirmClear] = useState(false);
   const [keyCheck, setKeyCheck] = useState({ state: "idle", message: "" });
 
   useEffect(() => {
     if (visible) {
-      setForm(settings);
+      setForm({ ...settings, chatFallbacksText: (settings.chatFallbacks || []).join(", "), liveFallbacksText: (settings.liveFallbacks || []).join(", ") });
       setConfirmClear(false);
       setKeyCheck({ state: "idle", message: "" });
     }
@@ -74,6 +76,8 @@ export function SettingsSheet({ visible, onClose }) {
       apiKey: form.apiKey.trim(),
       chatModel: form.chatModel.trim() || settings.chatModel,
       liveModel: form.liveModel.trim() || settings.liveModel,
+      chatFallbacks: splitModels(form.chatFallbacksText),
+      liveFallbacks: splitModels(form.liveFallbacksText),
       voice: form.voice,
       userName: form.userName.trim() || settings.userName,
     });
@@ -124,6 +128,22 @@ export function SettingsSheet({ visible, onClose }) {
       </Text>
       <Field label="Chat model" value={form.chatModel} onChangeText={set("chatModel")} autoCapitalize="none" autoCorrect={false} hint="Used for chat, files and dictation." />
       <Field label="Live (voice) model" value={form.liveModel} onChangeText={set("liveModel")} autoCapitalize="none" autoCorrect={false} hint="Used for the voice button, over the Gemini Live API." />
+      <Field
+        label="Fallback chat models"
+        value={form.chatFallbacksText}
+        onChangeText={set("chatFallbacksText")}
+        autoCapitalize="none"
+        autoCorrect={false}
+        hint="Comma separated, tried in order if the chat model is missing, retired, rate limited or overloaded. A bad API key doesn't trigger them."
+      />
+      <Field
+        label="Fallback voice models"
+        value={form.liveFallbacksText}
+        onChangeText={set("liveFallbacksText")}
+        autoCapitalize="none"
+        autoCorrect={false}
+        hint="Same idea for the voice button. Older Live models are being retired, so check these still exist."
+      />
       <View style={{ gap: 8 }}>
         <Text style={styles.label}>Voice</Text>
         <View style={styles.chips}>

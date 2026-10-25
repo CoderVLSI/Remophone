@@ -5,6 +5,11 @@ export const DEFAULT_SETTINGS = {
   apiKey: "",
   chatModel: "gemini-3.8-flash",
   liveModel: "gemini-3.8-live",
+  // Tried in order when the model above is missing, retired, rate limited or overloaded.
+  // "gemini-flash-latest" is Google's moving alias; the others are older stable/preview IDs
+  // and may be retired, so they are editable in Settings.
+  chatFallbacks: ["gemini-flash-latest", "gemini-2.5-flash"],
+  liveFallbacks: ["gemini-3.1-flash-live-preview", "gemini-2.5-flash-native-audio-preview-12-2025"],
   voice: "Kore",
   userName: "Riley B",
 };
