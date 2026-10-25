@@ -1,7 +1,6 @@
 import React, { useEffect, useRef } from "react";
-import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Image, Pressable, StyleSheet, Text, View } from "react-native";
 import Icon from "../components/Icon";
-import { WaveMark } from "../components/Logo";
 import { TOP_INSET } from "../components/Chrome";
 import { colors } from "../theme";
 import { EVERYTHING } from "../seed";
@@ -53,9 +52,7 @@ export default function DrawerPanel({ open, activeChannel, onSelect, onNewChanne
         style={[styles.panel, { paddingTop: TOP_INSET + 8, transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [-WIDTH, 0] }) }] }]}
       >
         <View style={styles.header}>
-          <View style={styles.logoBox}>
-            <WaveMark size={24} />
-          </View>
+          <Image source={require("../../../assets/logo.png")} style={styles.logoImage} />
           <Text style={styles.brand}>Claude Duet</Text>
         </View>
 
@@ -106,7 +103,7 @@ const styles = StyleSheet.create({
   scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.scrim },
   panel: { position: "absolute", left: 0, top: 0, bottom: 0, width: WIDTH, backgroundColor: "#050505", paddingHorizontal: 14, borderRightWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
   header: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 4, paddingVertical: 10, marginBottom: 12 },
-  logoBox: { width: 38, height: 38, borderRadius: 19, backgroundColor: colors.surface, borderWidth: 1, borderColor: "#3a2a24", alignItems: "center", justifyContent: "center" },
+  logoImage: { width: 40, height: 40, borderRadius: 11 },
   brand: { color: colors.text, fontSize: 18, fontWeight: "700" },
   row: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 54, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 16 },
   rowActive: { backgroundColor: "#1c1c1e" },

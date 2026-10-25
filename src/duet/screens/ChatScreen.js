@@ -1,8 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Animated, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Animated, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import Icon from "../components/Icon";
 import Composer from "../components/Composer";
-import { WaveMark } from "../components/Logo";
 import { colors, truncate } from "../theme";
 import { EVERYTHING } from "../seed";
 import { useDuet } from "../store";
@@ -132,7 +131,7 @@ export default function ChatScreen({ channelId, onOpenArtifact, onOpenChannel, o
       >
         {messages.length === 0 && !busy ? (
           <View style={styles.empty}>
-            <WaveMark size={44} />
+            <Image source={require("../../../assets/logo.png")} style={styles.emptyLogo} />
             <Text style={styles.emptyTitle}>What can I get started for you?</Text>
             {SUGGESTIONS.map((suggestion) => (
               <Pressable key={suggestion} style={styles.suggestion} onPress={() => send(suggestion)}>
@@ -210,6 +209,7 @@ const styles = StyleSheet.create({
   dots: { flexDirection: "row", gap: 6, paddingVertical: 10 },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent },
   empty: { alignItems: "center", gap: 12, paddingBottom: 20 },
+  emptyLogo: { width: 64, height: 64, borderRadius: 18 },
   emptyTitle: { color: colors.text, fontSize: 20, fontWeight: "600", marginBottom: 8 },
   suggestion: { borderWidth: StyleSheet.hairlineWidth, borderColor: colors.borderStrong, borderRadius: 16, paddingHorizontal: 16, paddingVertical: 11, backgroundColor: colors.surface },
   suggestionText: { color: colors.textDim, fontSize: 14 },

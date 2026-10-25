@@ -1,7 +1,6 @@
 import React, { useEffect, useRef } from "react";
-import { Animated, Easing, Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Easing, Image, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import Icon from "../components/Icon";
-import { WaveMark } from "../components/Logo";
 import { TOP_INSET } from "../components/Chrome";
 import { colors } from "../theme";
 import { useDuet } from "../store";
@@ -50,14 +49,18 @@ export default function VoiceOverlay({ visible, channelId, onClose }) {
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={styles.root}>
+        <Image source={require("../../../assets/voice-bg.jpg")} resizeMode="cover" style={styles.backdrop} />
+        <View style={styles.dim} />
         <View style={[styles.top, { paddingTop: TOP_INSET + 6 }]}>
           <Text style={styles.status}>{failed ? "Voice stopped" : STATUS_TEXT[voice.status]}</Text>
         </View>
 
         <View style={styles.center}>
           <Animated.View style={[styles.halo, { transform: [{ scale: haloScale }], opacity: voice.status === "speaking" ? 0.5 : 0.28 }]} />
-          <Animated.View style={[styles.orb, { transform: [{ scale: orbScale }] }]}>
-            <WaveMark size={64} />
+          <Animated.View style={{ transform: [{ scale: orbScale }] }}>
+            <View style={styles.orb}>
+              <Image source={require("../../../assets/voice-orb.png")} style={styles.orbImage} />
+            </View>
           </Animated.View>
         </View>
 
@@ -96,11 +99,15 @@ export default function VoiceOverlay({ visible, channelId, onClose }) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#000" },
+  backdrop: { ...StyleSheet.absoluteFillObject, width: "100%", height: "100%" },
+  dim: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.62)" },
   top: { alignItems: "center", paddingBottom: 8 },
   status: { color: colors.textDim, fontSize: 14, fontWeight: "500" },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   halo: { position: "absolute", width: 170, height: 170, borderRadius: 85, backgroundColor: colors.accent },
-  orb: { width: 150, height: 150, borderRadius: 75, backgroundColor: "#1a100c", borderWidth: 1.5, borderColor: colors.accentDeep, alignItems: "center", justifyContent: "center" },
+  // The art has a dark vignette at its rim, so it is enlarged and clipped to a circle.
+  orb: { width: 170, height: 170, borderRadius: 85, overflow: "hidden", backgroundColor: "#1a0a06" },
+  orbImage: { position: "absolute", width: 192, height: 192, left: -5, top: -12 },
   captions: { minHeight: 140, paddingHorizontal: 28, gap: 10, alignItems: "center", justifyContent: "flex-end" },
   userText: { color: colors.textDim, fontSize: 16, textAlign: "center", lineHeight: 22 },
   assistantText: { color: colors.text, fontSize: 18, textAlign: "center", lineHeight: 25 },

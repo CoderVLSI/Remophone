@@ -6,14 +6,19 @@
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "splash": {
-      "resizeMode": "contain",
+      "image": "./assets/splash.png",
+      "resizeMode": "cover",
       "backgroundColor": "#000000"
     },
     "assetBundlePatterns": [
       "**/*"
     ],
     "android": {
-      "package": "com.remophone.app"
+      "package": "com.remophone.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1a0a06"
+      }
     },
     "extra": {
       "eas": {
@@ -31,7 +36,9 @@
       ]
     ],
     "web": {
-      "bundler": "metro"
-    }
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png"
+    },
+    "icon": "./assets/icon.png"
   }
 }
